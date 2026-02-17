@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+python-multipart
+torch
+pandas
+numpy
+basic-pitch
+pretty_midi
+python-dotenv
+sqlalchemy
+passlib[bcrypt]
+python-jose[cryptography]
