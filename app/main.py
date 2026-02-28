@@ -9,7 +9,7 @@ import shutil
 import json 
 
 from app.model_defs import EmbeddingCRNN
-from app.utils import audio_to_model_input
+from app.utils import audio_to_model_input, get_beginner_position
 from app import models, database, auth 
 
 models.Base.metadata.create_all(bind=database.engine)
@@ -87,7 +87,7 @@ def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db:
 async def predict_tablature(
     file: UploadFile = File(...),
     db: Session = Depends(get_db), 
-    # current_user: models.User = Depends(auth.get_current_user) # Comentat pt testare rapida
+    # current_user: models.User = Depends(auth.get_current_user) 
 ):
     temp_filename = os.path.join(UPLOAD_DIR, file.filename)
     
@@ -104,46 +104,45 @@ async def predict_tablature(
         rest_features = df[['s_dur', 'diff_prev', 'diff_next']].values.astype(np.float32)
         rest_tensor = torch.tensor(rest_features).unsqueeze(0).to(DEVICE)
         
-        print("Running Model Prediction...")
+        print("Running Model")
         with torch.no_grad():
             logits = model((pitch_tensor, rest_tensor))
             pred_strings = torch.argmax(logits, dim=1).cpu().numpy().flatten()
             
-        result_tab = []
+        result_tab_original = []
+        result_tab_beginner = []
+        
         for i, row in df.iterrows():
-            string_idx = int(pred_strings[i])
             pitch = int(row['pitch'])
             
-            if 0 <= string_idx < 6:
-                open_pitch = OPEN_STRINGS[string_idx]
-                fret = pitch - open_pitch
-
-                if fret < 0:
-                    fret = 0
-            else:
-                fret = 0 
-
-            result_tab.append({
+            string_idx_orig = int(pred_strings[i])
+            fret_orig = max(0, pitch - OPEN_STRINGS[string_idx_orig]) if 0 <= string_idx_orig < 6 else 0
+            
+            string_idx_beg, fret_beg = get_beginner_position(pitch) 
+            
+            common_data = {
                 "time": float(row['s_on']),
                 "duration": float(row['s_dur']),
-                "string": string_idx + 1, 
-                "fret": fret,
                 "pitch": pitch
-            })
-            
-        json_content_str = json.dumps(result_tab)
-        new_tabEntry = models.Tablature(
-            filename=file.filename,
-            json_content=json_content_str,
-            # user_id=current_user.id  
-        )
-        db.add(new_tabEntry)
-        db.commit()
+            }
 
+            result_tab_original.append({
+                **common_data,
+                "string": string_idx_orig + 1,
+                "fret": fret_orig
+            })
+
+            result_tab_beginner.append({
+                **common_data,
+                "string": string_idx_beg + 1,
+                "fret": fret_beg
+            })
+                
         return {
             "filename": file.filename, 
-            "tablature": result_tab,
-            "message": "Tablature generated successfully using Notebook logic!"
+            "tablature": result_tab_original,
+            "tablature_beginner": result_tab_beginner,
+            "message": "Tablatures generated successfully!"
         }
 
     except Exception as e:
@@ -152,6 +151,7 @@ async def predict_tablature(
     finally:
         if os.path.exists(temp_filename):
             os.remove(temp_filename)
+
 
 @app.get("/history")
 def get_user_history(db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
