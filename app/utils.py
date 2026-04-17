@@ -4,14 +4,11 @@ from basic_pitch.inference import predict
 
 OPEN_STRING_MIDI = [64, 59, 55, 50, 45, 40]
 
-MIN_GUITAR_MIDI = 40   
+MIN_GUITAR_MIDI = 40
 MAX_GUITAR_MIDI = 88
 
 
 def deduplicate_nearby_notes(df: pd.DataFrame, time_threshold: float = 0.03) -> pd.DataFrame:
-    """
-    Elimină duplicate apropiate pentru același pitch.
-    """
     if df.empty:
         return df
 
@@ -38,10 +35,6 @@ def deduplicate_nearby_notes(df: pd.DataFrame, time_threshold: float = 0.03) -> 
 
 
 def preprocess_note_events(note_events):
-    """
-    Creează inputul pentru model și păstrează și durata brută în secunde
-    pentru outputul API.
-    """
     data = []
     for note in note_events:
         onset = float(note[0])
@@ -114,7 +107,7 @@ def audio_to_model_input(audio_path):
             onset_threshold=0.6,
             frame_threshold=0.35,
             minimum_note_length=80,
-            minimum_frequency=82.41,    
+            minimum_frequency=82.41,
             maximum_frequency=1318.51,
             melodia_trick=True
         )
@@ -125,42 +118,60 @@ def audio_to_model_input(audio_path):
     return preprocess_note_events(note_events)
 
 
-def get_beginner_position(target_midi_pitch):
-    beginner_zone = {}
+def build_beginner_positions(max_fret=4):
+    exact_pitch_positions = {}
+    pitch_class_positions = {pc: [] for pc in range(12)}
 
-    # pitches in the first 4 frets
-    # pitch = key, [string, fret] = value
     for s_idx, open_midi in enumerate(OPEN_STRING_MIDI):
-        for fret in range(5):
-            p = open_midi + fret
-            if p not in beginner_zone:
-                beginner_zone[p] = (s_idx, fret)
+        for fret in range(max_fret + 1):
+            midi_pitch = open_midi + fret
+            pos = (s_idx, fret, midi_pitch)
 
-    if target_midi_pitch in beginner_zone:
-        return beginner_zone[target_midi_pitch]
+            if midi_pitch not in exact_pitch_positions:
+                exact_pitch_positions[midi_pitch] = []
+            exact_pitch_positions[midi_pitch].append(pos)
 
-    # octave displacement
-    target_pc = target_midi_pitch % 12
-    candidates = []
+            pitch_class_positions[midi_pitch % 12].append(pos)
 
-    for p_available, pos in beginner_zone.items():
-        if p_available % 12 == target_pc:
-            dist = abs(p_available - target_midi_pitch)
-            candidates.append((dist, pos))
+    for midi_pitch in exact_pitch_positions:
+        exact_pitch_positions[midi_pitch].sort(key=lambda x: (x[1], x[0]))
 
-    if candidates:
-        candidates.sort(key=lambda x: x[0])
-        return candidates[0][1]
+    for pc in pitch_class_positions:
+        pitch_class_positions[pc].sort(key=lambda x: (x[1], x[0], x[2]))
 
-    return None, None
+    return exact_pitch_positions, pitch_class_positions
+
+
+BEGINNER_EXACT_POSITIONS, BEGINNER_PC_POSITIONS = build_beginner_positions(4)
+
+
+def get_beginner_position(target_midi_pitch):
+    target_midi_pitch = int(target_midi_pitch)
+
+    exact_candidates = BEGINNER_EXACT_POSITIONS.get(target_midi_pitch, [])
+    if exact_candidates:
+        best = exact_candidates[0]
+        return best[0], best[1]
+
+    pitch_class = target_midi_pitch % 12
+    octave_candidates = BEGINNER_PC_POSITIONS.get(pitch_class, [])
+
+    if not octave_candidates:
+        return None, None
+
+    best = min(
+        octave_candidates,
+        key=lambda x: (abs(x[2] - target_midi_pitch), x[1], x[0])
+    )
+    return best[0], best[1]
 
 
 def transpose_song_to_beginner(midi_pitches):
     beg_strings = []
     beg_frets = []
 
-    for m in midi_pitches:
-        s, f = get_beginner_position(int(m))
+    for midi_pitch in midi_pitches:
+        s, f = get_beginner_position(int(midi_pitch))
         beg_strings.append(s)
         beg_frets.append(f)
 
