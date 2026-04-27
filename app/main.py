@@ -39,8 +39,10 @@ STRIDE = 16
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 model = EmbeddingCRNN()
+
 try:
     checkpoint = torch.load(MODEL_PATH, map_location=DEVICE)
+
     if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
         model.load_state_dict(checkpoint["state_dict"])
     elif isinstance(checkpoint, dict):
@@ -67,10 +69,13 @@ def get_db():
 
 def feasible_string_indices(pitch: int):
     valid = []
+
     for idx, open_pitch in enumerate(OPEN_STRINGS):
         fret = pitch - open_pitch
+
         if 0 <= fret <= MAX_FRET:
             valid.append(idx)
+
     return valid
 
 
@@ -82,6 +87,7 @@ def predict_logits_windowed(model, pitch_arr, rest_arr, device):
 
     if T <= SEQ_LEN:
         pad = SEQ_LEN - T
+
         if pad > 0:
             pitch_pad = np.pad(pitch_arr, (0, pad), mode="edge")
             rest_pad = np.pad(rest_arr, ((0, pad), (0, 0)), mode="edge")
@@ -100,6 +106,7 @@ def predict_logits_windowed(model, pitch_arr, rest_arr, device):
     cnt = np.zeros(T, dtype=np.float32)
 
     starts = list(range(0, T - SEQ_LEN + 1, STRIDE))
+
     if starts[-1] != T - SEQ_LEN:
         starts.append(T - SEQ_LEN)
 
@@ -123,14 +130,18 @@ def predict_logits_windowed(model, pitch_arr, rest_arr, device):
 
 def decode_with_viterbi(logits, pitches):
     T = len(pitches)
+
     if T == 0:
         return []
 
     candidates_per_note = []
+
     for pitch in pitches:
         valid = feasible_string_indices(int(pitch))
+
         if not valid:
             valid = [0]
+
         candidates_per_note.append(valid)
 
     dp = []
@@ -143,6 +154,7 @@ def decode_with_viterbi(logits, pitches):
         fret = int(pitches[0]) - OPEN_STRINGS[s]
         cost = -float(logits[0, s])
         cost += 0.08 * fret
+
         first_states[s] = cost
         first_back[s] = None
 
@@ -182,25 +194,30 @@ def decode_with_viterbi(logits, pitches):
     last_state = min(dp[-1], key=dp[-1].get)
 
     path = [last_state]
+
     for t in range(T - 1, 0, -1):
         last_state = back[t][last_state]
         path.append(last_state)
 
     path.reverse()
+
     return path
 
 
 @app.post("/register", status_code=status.HTTP_201_CREATED)
 def register_user(user_data: auth.UserCreate, db: Session = Depends(get_db)):
     existing_user = db.query(models.User).filter(models.User.username == user_data.username).first()
+
     if existing_user:
         raise HTTPException(status_code=400, detail="Username already registered")
 
     hashed_pwd = auth.get_password_hash(user_data.password)
     new_user = models.User(username=user_data.username, password_hash=hashed_pwd)
+
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
     return {"message": "User created successfully"}
 
 
@@ -210,6 +227,7 @@ def login_for_access_token(
     db: Session = Depends(get_db)
 ):
     user = auth.authenticate_user(db, form_data.username, form_data.password)
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -218,7 +236,11 @@ def login_for_access_token(
         )
 
     access_token = auth.create_access_token(data={"sub": user.username})
-    return {"access_token": access_token, "token_type": "bearer"}
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer"
+    }
 
 
 @app.get("/me")
@@ -268,6 +290,7 @@ async def predict_tablature(
 
             if fret_orig < 0 or fret_orig > MAX_FRET:
                 valid = feasible_string_indices(pitch)
+
                 if valid:
                     best_valid = max(valid, key=lambda s: logits[i, s])
                     string_idx_orig = best_valid
@@ -314,6 +337,7 @@ async def predict_tablature(
             json_content=json.dumps(payload_to_save),
             user_id=current_user.id
         )
+
         db.add(saved_tab)
         db.commit()
         db.refresh(saved_tab)
@@ -352,6 +376,7 @@ def get_user_history(
 
     for t in tabs:
         parsed_content = {}
+
         try:
             parsed_content = json.loads(t.json_content) if t.json_content else {}
         except Exception:
@@ -369,4 +394,35 @@ def get_user_history(
         })
 
     return results
+
+
+@app.delete("/history/{tab_id}")
+def delete_tablature(
+    tab_id: int,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    tab = (
+        db.query(models.Tablature)
+        .filter(
+            models.Tablature.id == tab_id,
+            models.Tablature.user_id == current_user.id
+        )
+        .first()
+    )
+
+    if tab is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tablature not found"
+        )
+
+    db.delete(tab)
+    db.commit()
+
+    return {
+        "message": "Tablature deleted successfully",
+        "id": tab_id
+    }
+
 
