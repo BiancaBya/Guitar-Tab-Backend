@@ -11,7 +11,6 @@ import json
 from app.model_defs import EmbeddingCRNN
 from app.utils import (
     audio_to_model_input,
-    get_beginner_position,
     transpose_song_to_beginner
 )
 from app import models, database, auth
@@ -67,10 +66,6 @@ def get_db():
 
 
 def feasible_string_indices(pitch: int):
-    """
-    Returnează doar string-urile pe care nota respectivă poate fi cântată
-    în intervalul 0..MAX_FRET.
-    """
     valid = []
     for idx, open_pitch in enumerate(OPEN_STRINGS):
         fret = pitch - open_pitch
@@ -80,10 +75,6 @@ def feasible_string_indices(pitch: int):
 
 
 def predict_logits_windowed(model, pitch_arr, rest_arr, device):
-    """
-    Inferență pe ferestre glisante, mai apropiată de train.
-    Returnează logits [T, 6].
-    """
     T = len(pitch_arr)
 
     if T == 0:
@@ -119,7 +110,7 @@ def predict_logits_windowed(model, pitch_arr, rest_arr, device):
             p = torch.LongTensor(pitch_arr[start:end]).unsqueeze(0).to(device)
             r = torch.tensor(rest_arr[start:end], dtype=torch.float32).unsqueeze(0).to(device)
 
-            logits = model((p, r))[0].permute(1, 0).cpu().numpy()  
+            logits = model((p, r))[0].permute(1, 0).cpu().numpy()
 
             agg[start:end] += logits
             cnt[start:end] += 1.0
@@ -131,9 +122,6 @@ def predict_logits_windowed(model, pitch_arr, rest_arr, device):
 
 
 def decode_with_viterbi(logits, pitches):
-    """
-    Alege un traseu de string-uri plauzibil și cântabil.
-    """
     T = len(pitches)
     if T == 0:
         return []
@@ -228,15 +216,24 @@ def login_for_access_token(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
     access_token = auth.create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@app.get("/me")
+def get_me(current_user: models.User = Depends(auth.get_current_user)):
+    return {
+        "id": current_user.id,
+        "username": current_user.username
+    }
 
 
 @app.post("/predict-tab/")
 async def predict_tablature(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    # current_user: models.User = Depends(auth.get_current_user)
+    current_user: models.User = Depends(auth.get_current_user)
 ):
     temp_filename = os.path.join(UPLOAD_DIR, file.filename)
 
@@ -284,7 +281,7 @@ async def predict_tablature(
 
             common_data = {
                 "time": float(row["s_on"]),
-                "duration": float(row["s_dur_raw"]),   
+                "duration": float(row["s_dur_raw"]),
                 "pitch": pitch
             }
 
@@ -307,11 +304,26 @@ async def predict_tablature(
                     "fret": None
                 })
 
+        payload_to_save = {
+            "tablature": result_tab_original,
+            "tablature_beginner": result_tab_beginner
+        }
+
+        saved_tab = models.Tablature(
+            filename=file.filename,
+            json_content=json.dumps(payload_to_save),
+            user_id=current_user.id
+        )
+        db.add(saved_tab)
+        db.commit()
+        db.refresh(saved_tab)
+
         return {
+            "id": saved_tab.id,
             "filename": file.filename,
             "tablature": result_tab_original,
             "tablature_beginner": result_tab_beginner,
-            "message": "Tablatures generated successfully!"
+            "message": "Tablatures generated and saved successfully!"
         }
 
     except HTTPException:
@@ -329,14 +341,31 @@ def get_user_history(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
-    tabs = db.query(models.Tablature).filter(models.Tablature.user_id == current_user.id).all()
+    tabs = (
+        db.query(models.Tablature)
+        .filter(models.Tablature.user_id == current_user.id)
+        .order_by(models.Tablature.id.desc())
+        .all()
+    )
+
     results = []
 
     for t in tabs:
+        parsed_content = {}
+        try:
+            parsed_content = json.loads(t.json_content) if t.json_content else {}
+        except Exception:
+            parsed_content = {}
+
+        tablature = parsed_content.get("tablature", [])
+        tablature_beginner = parsed_content.get("tablature_beginner", [])
+
         results.append({
             "id": t.id,
             "filename": t.filename,
-            "preview": json.loads(t.json_content)[:5]
+            "tablature": tablature,
+            "tablature_beginner": tablature_beginner,
+            "preview": tablature[:5]
         })
 
     return results
