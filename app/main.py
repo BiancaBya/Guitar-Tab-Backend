@@ -1,6 +1,7 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends, status, Query
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 import torch
 import numpy as np
@@ -14,6 +15,7 @@ from app.utils import (
     transpose_song_to_beginner
 )
 from app import models, database, auth
+from app.pdf_export import build_tablature_pdf
 
 models.Base.metadata.create_all(bind=database.engine)
 
@@ -360,6 +362,45 @@ async def predict_tablature(
             os.remove(temp_filename)
 
 
+def get_tablature_or_404(tab_id: int, db: Session, current_user: models.User):
+    tab = (
+        db.query(models.Tablature)
+        .filter(
+            models.Tablature.id == tab_id,
+            models.Tablature.user_id == current_user.id
+        )
+        .first()
+    )
+
+    if tab is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tablature not found"
+        )
+
+    return tab
+
+
+def parse_saved_tablature(tab: models.Tablature):
+    try:
+        return json.loads(tab.json_content) if tab.json_content else {}
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not read saved tablature content"
+        )
+
+
+def build_export_filename(filename: str, variant: str):
+    base_name = os.path.splitext(filename or "tablature")[0]
+    safe_base = "".join(
+        char if char.isalnum() or char in ("-", "_") else "_"
+        for char in base_name
+    ).strip("_") or "tablature"
+
+    return f"{safe_base}_{variant}_tab.pdf"
+
+
 @app.get("/history")
 def get_user_history(
     db: Session = Depends(get_db),
@@ -394,6 +435,41 @@ def get_user_history(
         })
 
     return results
+
+
+@app.get("/history/{tab_id}/export-pdf")
+def export_tablature_pdf(
+    tab_id: int,
+    variant: str = Query("original", pattern="^(original|beginner)$"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    tab = get_tablature_or_404(tab_id, db, current_user)
+    parsed_content = parse_saved_tablature(tab)
+
+    if variant == "beginner":
+        notes = parsed_content.get("tablature_beginner", [])
+    else:
+        notes = parsed_content.get("tablature", [])
+
+    if not isinstance(notes, list):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Invalid tablature format"
+        )
+
+    pdf_buffer = build_tablature_pdf(tab.filename, notes, variant)
+    export_filename = build_export_filename(tab.filename, variant)
+
+    headers = {
+        "Content-Disposition": f'attachment; filename="{export_filename}"'
+    }
+
+    return StreamingResponse(
+        pdf_buffer,
+        media_type="application/pdf",
+        headers=headers
+    )
 
 
 @app.delete("/history/{tab_id}")
