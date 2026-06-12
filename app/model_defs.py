@@ -31,8 +31,6 @@ class ResidualBlock(nn.Module):
         out = self.relu(out)
         return out
 
-# @title Embedding Model
-
 class EmbeddingCRNN(nn.Module):
     def __init__(self, num_classes=6, embedding_dim=32, cnn_channels=64, lstm_hidden=128):
         super(EmbeddingCRNN, self).__init__()
