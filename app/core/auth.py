@@ -5,10 +5,12 @@ from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
-from app import database, models
+from app.domain import models
 import os
 from dotenv import load_dotenv  
 from datetime import datetime, timedelta
+
+from app.database import database
 
 load_dotenv()
 

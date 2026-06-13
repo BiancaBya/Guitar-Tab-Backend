@@ -1,6 +1,7 @@
 from jose import jwt
 
-from app import auth, models
+from app.domain import models
+from app.core import auth
 
 
 def test_register_user_success(client):

@@ -1,6 +1,6 @@
 import pandas as pd
 
-from app.utils import (
+from app.service.utils import (
     deduplicate_nearby_notes,
     get_beginner_position,
     preprocess_note_events,

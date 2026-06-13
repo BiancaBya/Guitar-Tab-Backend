@@ -6,12 +6,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.core import auth
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from app import auth, models
-from app.main import app, get_db
+from app.domain import models
+from app.controller.main import app, get_db
 
 
 @pytest.fixture()

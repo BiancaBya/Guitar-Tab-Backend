@@ -5,8 +5,8 @@ import pytest
 import torch
 from fastapi import HTTPException
 
-from app import models
-from app.main import (
+from app.domain import models
+from app.controller.main import (
     build_export_filename,
     decode_with_viterbi,
     feasible_string_indices,

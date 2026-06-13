@@ -1,6 +1,6 @@
 import json
 
-from app import models
+from app.domain import models
 
 
 def _make_notes(count=2):

@@ -3,8 +3,8 @@ import os
 import numpy as np
 import pandas as pd
 
-from app import models
-from app import main as main_module
+from app.domain import models
+from app.controller import main as main_module
 
 
 class DummyModel:

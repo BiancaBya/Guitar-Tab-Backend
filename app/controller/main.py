@@ -9,13 +9,15 @@ import os
 import shutil
 import json
 
-from app.model_defs import EmbeddingCRNN
-from app.utils import (
+from app.core import auth
+from app.database import database
+from app.modelAI.model_defs import EmbeddingCRNN
+from app.service.utils import (
     audio_to_model_input,
     transpose_song_to_beginner
 )
-from app import models, database, auth
-from app.pdf_export import build_tablature_pdf
+from app.domain import models
+from app.service.pdf_export import build_tablature_pdf
 
 models.Base.metadata.create_all(bind=database.engine)
 
