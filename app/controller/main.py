@@ -275,10 +275,8 @@ async def predict_tablature(
         pitches = df["pitch"].values.astype(np.int64)
         rest_features = df[["s_dur", "diff_prev", "diff_next"]].values.astype(np.float32)
 
-        print("Running windowed model inference...")
         logits = predict_logits_windowed(model, pitches, rest_features, DEVICE)
 
-        print("Running constrained decoding...")
         pred_string_indices = decode_with_viterbi(logits, pitches)
 
         beginner_strings, beginner_frets = transpose_song_to_beginner(pitches)
